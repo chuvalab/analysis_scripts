@@ -1,0 +1,160 @@
+---
+title: "Analyse MALDI-MSI ovary dataset"
+output:
+  html_document:
+  keep_md: true
+smart: false
+toc: true
+toc_float: true
+theme: united
+params:
+  yaml_file: yaml_file
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+---
+***
+  
+# Setup
+## Libraries
+```{r}
+#load R packages
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(yaml)
+```
+
+## Parameters from YAML
+```{r}
+args <- yaml.load_file(params$yaml_file)
+```
+
+# Cluster pixels and visualize on UMAP
+## Cell clustering
+```{r}
+#load MALDI-MSI data exported from SCILS
+pixels <- read.csv(args$input_files$pixels)
+masses <- read.csv(args$input_files$masses)
+metadata <- read.csv(args$input_files$metadata)
+
+colnames(pixels) <- c('pixelID', masses$x)
+rownames(pixels) <- paste0("pixel_", pixels[,1])
+pixels <- pixels[,-1]
+```
+
+## Explore Raw data
+```{r}
+dim(pixels)
+pixels[1:5,1:5]
+pixels[1:5,438:443]
+```
+## Use m/z > 400
+```{r}
+n_pcs <- args$analysis_params$n_pcs
+res <- args$analysis_params$resolution
+
+msidata.data <- pixels[,as.numeric(colnames(pixels))>400]
+
+# msidata.data <- read.csv(file='1.csv',row.names = 1, header = TRUE,sep=",")
+#transform of data format
+msidata.data <- msidata.data*100 # Why x100?
+msidata.data <- round(msidata.data,digits=0)
+msidata.data <- as.data.frame(t(msidata.data)) # Transpose, so pixels become columns
+#create Seurate object
+msidata <- CreateSeuratObject(counts = msidata.data, project = "IRI")
+# data normalization
+msidata <- SCTransform(msidata, verbose = FALSE)
+# PCA analysis
+msidata <- RunPCA(msidata, assay = "SCT", verbose = FALSE)
+VizDimLoadings(msidata, dims = 1:2, reduction = "pca")
+DimPlot(msidata, reduction = "pca")
+DimHeatmap(msidata, dims = 1:15, cells = 500, balanced = TRUE)
+ElbowPlot(msidata)
+
+# UMAP analysis
+msidata <- FindNeighbors(msidata, dims = 1:n_pcs)
+msidata <- FindClusters(msidata, resolution = res)
+
+# Notice the parameters diverting from default. Is this needed in our case?
+msidata <- RunUMAP(object = msidata,
+                   dims = 1:n_pcs)# ,
+                   # n.neighbors = 15L,
+                   # min.dist = 0.05,
+                   # check_duplicates = FALSE)
+# saveRDS(object = msidata,
+#         file = "msidata.rds")
+DimPlot(object = msidata, reduction = 'umap', label = TRUE, group.by="orig.ident",pt.size=1,label.size=5)
+DimPlot(object = msidata, reduction = 'umap', label = TRUE, pt.size=1,label.size=5)
+```
+
+## Add cluster id from Seurat object to the metadata
+```{r}
+seurat_clusters <- msidata@meta.data %>% select(seurat_clusters)
+seurat_clusters$pixelID <- rownames(seurat_clusters)
+# seurat_clusters$seurat_clusters <- paste0('cl_', seurat_clusters$seurat_clusters)
+metadata$pixelID <- paste0('pixel_', metadata$pixelID)
+metadata <- inner_join(metadata, seurat_clusters, by="pixelID")
+# saveRDS(object = metadata, file = 'metadata.rds')
+```
+
+## Plot with ggplot2 and geom_raster
+```{r}
+p <- ggplot(metadata, aes(x, y)) +
+  geom_raster(aes(fill=seurat_clusters)) +
+  labs(title = "Seurat clusters in space")
+print(p)
+# ggplotly(p)
+```
+
+## Select features
+* Features with highest residual variance. These are the most variable features
+* For more details, refer to: https://htmlpreview.github.io/?https://github.com/satijalab/sctransform/blob/supp_html/supplement/variance_stabilizing_transformation.html
+```{r}
+sct_feature_attributes <- msidata@assays$SCT@SCTModel.list$model1@feature.attributes
+sct_feature_attributes %>% arrange(desc(residual_variance)) %>% head(n=20)
+top <- sct_feature_attributes %>% arrange(desc(residual_variance)) %>% head(n=20) %>% rownames()
+```
+
+## Plot top most variable metabolites
+```{r}
+# Plot as pct of top value for each metabolite (column)
+pixels_top_int <- pixels[ ,top]
+column_max <- pixels_top_int %>% summarise_if(is.numeric, max)
+pixels_top_int_pct <- as.data.frame(round(mapply('/', pixels_top_int, column_max)*100))
+pixels_top_int_pct$pixelID <-  row.names(pixels_top_int)
+intensities_pct <- merge(metadata,
+                         pixels_top_int_pct,
+                         by = "pixelID")
+intensities_pct <- intensities_pct %>% select(-c(pixelID, dataset, normalization, seurat_clusters))
+for (feature in top) {
+  print(feature)
+  p <- ggplot(intensities_pct, aes(x, y)) +
+    geom_raster(aes(fill=get(feature))) +
+    scale_fill_gradient(low = "black", high = "green") +
+    labs(title = paste0("Intensities for m/z of: ", feature))
+  print(p)
+}
+```
+## Plot metabolites with m/z > 400
+```{r}
+top <- colnames(pixels)[as.numeric(colnames(pixels))>400]
+
+# Plot as pct of top value for each metabolite (column)
+pixels_top_int <- pixels[ ,top]
+column_max <- pixels_top_int %>% summarise_if(is.numeric, max)
+pixels_top_int_pct <- as.data.frame(round(mapply('/', pixels_top_int, column_max)*100))
+pixels_top_int_pct$pixelID <-  row.names(pixels_top_int)
+intensities_pct <- merge(metadata,
+                         pixels_top_int_pct,
+                         by = "pixelID")
+intensities_pct <- intensities_pct %>% select(-c(pixelID, dataset, normalization, seurat_clusters))
+for (feature in top) {
+  print(feature)
+  p <- ggplot(intensities_pct, aes(x, y)) +
+    geom_raster(aes(fill=get(feature))) +
+    scale_fill_gradient(low = "black", high = "green") +
+    labs(title = paste0("Intensities for m/z of: ", feature))
+  print(p)
+}
+```
+
+
