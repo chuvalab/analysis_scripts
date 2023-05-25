@@ -1,0 +1,8 @@
+---
+input_files:
+    pixels: "/path/to/EXPORT_data_primordial_follicles_5um.csv.gz"
+    masses: "/path/to/EXPORT_nonrounded_masses_ovariandata.csv.gz"
+    metadata: "/path/to/EXPORT_metadata_primordial_follicles_5um.csv.gz"
+analysis_params:
+  n_pcs: 17
+  resolution: 0.2
