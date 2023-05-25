@@ -1,0 +1,31 @@
+# Title: Execute R workflow for metabolomics, with parameters pulled from a yaml file
+# Author: I. Moustakas, i.moustakas@lumc.nl
+
+SAMPLES = ["antral_follicle_2_5um", "full_20um", "matrix_embedding_20um", "primordial_follicles_5um", "degenerated_antral_follicle_5um", "matrix_20um", "primordial_follicles_2_5um"]
+
+workdir: "/path/to/working_dir/"
+
+rule all:
+    input:
+        expand("{sample}/metabolomics_{sample}.html", sample = SAMPLES)
+
+rule knit:
+    input:
+        yml="params_{sample}.yml",
+        rmd="metabolomics_workflow.Rmd"
+    params:
+        sample="{sample}",
+        sthreads=1,
+        mem="15G",
+        time="0:30:0",
+        log="logs/{sample}.log"
+    output:
+        "{sample}/metabolomics_{sample}.html"
+    shell:
+        """
+        set -e
+        mkdir -p {params.sample}
+        /path/to/bin/Rscript -e "rmarkdown::render('{input.rmd}', \
+        params=list(yaml_file = '{input.yml}'),
+        output_file = '{output}')"
+        """
